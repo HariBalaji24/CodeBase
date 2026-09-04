@@ -46,7 +46,12 @@ const getrepository = async (req: Request, res: Response) => {
   try {
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
     const response = await axios.get(apiUrl, {
-      headers: { Accept: "application/vnd.github+json" },
+      headers: {
+        Accept: "application/vnd.github+json",
+        ...(process.env.GITHUB_TOKEN
+          ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+          : {}),
+      },
     });
 
     return res.status(200).json({
