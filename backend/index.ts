@@ -2,6 +2,13 @@ import express from "express";
 import cors from "cors";
 import router from "./routes/routes.ts";
 
+// Optional: reads GITHUB_TOKEN from backend/.env if the file exists.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env file - the app still runs, just on GitHub's 60 req/hour anonymous limit.
+}
+
 const app = express();
 const PORT = 5000;
 
