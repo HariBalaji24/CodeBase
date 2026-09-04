@@ -20,15 +20,31 @@ const parseRepoUrl = (repourl: string) => {
 };
 
 const getrepository = async (req: Request, res: Response) => {
+  const { repourl } = req.body ?? {};
+
+  if (typeof repourl !== "string" || !repourl.trim()) {
+    return res.status(400).json({
+      message: "Please enter a GitHub repository URL.",
+    });
+  }
+
+  let parsed;
   try {
-    const { repourl } = req.body;
-    const parsed = parseRepoUrl(repourl);
+    parsed = parseRepoUrl(repourl.trim());
+  } catch {
+    parsed = null;
+  }
 
-    if (!parsed) {
-      return res.status(400).json({ message: "Invalid GitHub repository URL" });
-    }
+  if (!parsed) {
+    return res.status(400).json({
+      message: "That does not look like a GitHub repository URL.",
+    });
+  }
 
-    const apiUrl = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`;
+  const { owner, repo } = parsed;
+
+  try {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
     const response = await axios.get(apiUrl, {
       headers: { Accept: "application/vnd.github+json" },
     });
