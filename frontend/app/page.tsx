@@ -54,9 +54,10 @@ export default function RepositoryDashboard() {
         classes: 0,
       });
     } catch (err) {
-      console.error(err);
       setError(
-        "Unable to analyze the repository. Please check the URL and try again."
+        err instanceof Error
+          ? err.message
+          : "Unable to analyze the repository. Please try again."
       );
     } finally {
       setLoading(false);
