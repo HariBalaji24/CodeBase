@@ -54,9 +54,27 @@ const getrepository = async (req: Request, res: Response) => {
       data: response.data,
     });
   } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      const { status } = error.response;
+
+      if (status === 404) {
+        return res.status(404).json({
+          message: `Repository "${owner}/${repo}" not found. It may be private or renamed.`,
+        });
+      }
+
+      console.error(`GitHub API ${status} for ${owner}/${repo}`);
+
+      return res.status(status).json({
+        message: `GitHub returned an error (${status}) for ${owner}/${repo}.`,
+      });
+    }
+
     console.error(error);
 
-    return res.status(500).json({ message: "Something went wrong" });
+    return res.status(500).json({
+      message: "Could not reach GitHub. Check your network connection.",
+    });
   }
 };
 
