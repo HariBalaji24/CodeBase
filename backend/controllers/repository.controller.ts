@@ -19,6 +19,11 @@ const parseRepoUrl = (repourl: string) => {
   return { owner, repo };
 };
 
+const minutesUntil = (epochSeconds: number) => {
+  const diffMs = epochSeconds * 1000 - Date.now();
+  return Math.max(1, Math.ceil(diffMs / 60000));
+};
+
 const getrepository = async (req: Request, res: Response) => {
   const { repourl } = req.body ?? {};
 
@@ -60,7 +65,20 @@ const getrepository = async (req: Request, res: Response) => {
     });
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {
-      const { status } = error.response;
+      const { status, headers } = error.response;
+      const remaining = headers["x-ratelimit-remaining"];
+      const reset = Number(headers["x-ratelimit-reset"]);
+
+      // GitHub uses 403 (and sometimes 429) for rate limiting.
+      if ((status === 403 || status === 429) && remaining === "0") {
+        const wait = Number.isFinite(reset) ? minutesUntil(reset) : null;
+
+        return res.status(429).json({
+          message: process.env.GITHUB_TOKEN
+            ? `GitHub rate limit reached. Try again in ${wait ?? "a few"} minute(s).`
+            : `GitHub rate limit reached (60 requests/hour without a token). Try again in ${wait ?? "a few"} minute(s), or add a GITHUB_TOKEN to backend/.env.`,
+        });
+      }
 
       if (status === 404) {
         return res.status(404).json({
