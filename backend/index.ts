@@ -27,4 +27,14 @@ app.use("/", router);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(
+    process.env.GITHUB_TOKEN
+      ? "  GITHUB_TOKEN  loaded (5000 requests/hour)"
+      : "  GITHUB_TOKEN  missing (60 requests/hour) - see .env.example",
+  );
+  console.log(
+    process.env.GROQ_API_KEY
+      ? "  GROQ_API_KEY  loaded"
+      : "  GROQ_API_KEY  not set (AI features are not implemented yet)",
+  );
 });
