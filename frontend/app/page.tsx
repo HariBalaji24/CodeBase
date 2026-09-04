@@ -38,23 +38,21 @@ export default function RepositoryDashboard() {
       setError("");
       const response = await getgithubrepository(url);
 
-      console.log("Repository response:", response);
-
-      /*
-       * Adjust this depending on the response
-       * returned by your backend.
-       */
-//       setRepository({
-//   name: response.name,
-//   description: response.description ?? "",
-//   owner: response.owner ?? "",
-//   language: response.language ?? "Unknown",
-//   stars: response.stars ?? 0,
-//   forks: response.forks ?? 0,
-//   files: response.files ?? 0,
-//   functions: response.functions ?? 0,
-//   classes: response.classes ?? 0,
-// });
+      setRepository({
+        name: response.name,
+        description: response.description ?? "No description provided.",
+        owner: response.owner?.login ?? "",
+        language: response.language ?? "Unknown",
+        stars: response.stargazers_count ?? 0,
+        forks: response.forks_count ?? 0,
+        /*
+         * Not returned by the GitHub API - these come from the
+         * static-analysis pipeline, which is not built yet.
+         */
+        files: 0,
+        functions: 0,
+        classes: 0,
+      });
     } catch (err) {
       console.error(err);
       setError(
