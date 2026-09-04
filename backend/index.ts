@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-const router = express.Router();
+import router from "./routes/routes.ts";
 
 const app = express();
 app.use(express.json());
