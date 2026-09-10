@@ -29,9 +29,12 @@ interface Repository {
     html_url?: string;
   };
 }
-
-const Page = () => {
-  const searchParams = useSearchParams();
+interface PageProps {
+  searchParams: Promise<{
+    repo?: string;
+  }>;
+}
+const Page = ({ searchParams }: PageProps) => {
 
   const [response, setResponse] = useState<Repository | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +42,8 @@ const Page = () => {
 
   useEffect(() => {
     const fetchRepository = async () => {
-      const url = searchParams.get("repo");
+      const params = await searchParams;
+  const url = params.repo;
 
       if (!url) {
         setError("No GitHub repository URL was provided.");
