@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import axios from "axios";
+import dotenv from "dotenv";
+dotenv.config();
 
 const parseRepoUrl = (repourl: string) => {
   const { hostname, pathname } = new URL(repourl);
