@@ -9,7 +9,7 @@ export default function HomePage() {
   const [error, setError] = useState("");
 
   async function handleSubmit() {
-    console.log(url)
+    
     if (!url.trim()) {
       setError("Please enter a GitHub repository URL.");
       return;
