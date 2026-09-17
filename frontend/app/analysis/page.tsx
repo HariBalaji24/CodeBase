@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useEffect,
   useState,
   type ReactNode,
@@ -98,6 +99,14 @@ const STAGE_LABELS: Record<string, string> = {
 ========================================================= */
 
 export default function AnalysisPage() {
+  return (
+    <Suspense fallback={<div className="h-screen w-full bg-[#050608]" />}>
+      <AnalysisContent />
+    </Suspense>
+  );
+}
+
+function AnalysisContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
