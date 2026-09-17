@@ -111,8 +111,13 @@ function AnalysisContent() {
   const router = useRouter();
 
   const repo =
-    searchParams.get("repo") ||
-    "https://github.com/example/repository";
+    searchParams.get("repo") ??
+    (typeof window !== "undefined"
+      ? new URLSearchParams(
+          window.location.search
+        ).get("repo")
+      : null) ??
+    "";
 
   const [sidebarOpen, setSidebarOpen] =
     useState(true);
@@ -147,6 +152,8 @@ function AnalysisContent() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (!repo) return;
 
     const applyStatus = (status: AnalysisJobStatus) => {
       if (status.state === "completed") {

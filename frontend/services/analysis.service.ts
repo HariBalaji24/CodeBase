@@ -26,7 +26,19 @@ export type AnalysisStatus = {
   chunks?: number;
 };
 
-const backendUrl = () => process.env.NEXT_PUBLIC_BACKEND_URL;
+const backendUrl = () => {
+  const url = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (!url) {
+    // NEXT_PUBLIC_* vars are baked in at build time - if this fires, the
+    // deploy host's build didn't have NEXT_PUBLIC_BACKEND_URL set. Add it
+    // in the host's project settings and redeploy (env changes alone don't
+    // update an already-built deployment).
+    throw new Error(
+      "NEXT_PUBLIC_BACKEND_URL is not set. Add it in your deploy host's environment variables and redeploy.",
+    );
+  }
+  return url;
+};
 
 const toError = (error: unknown) => {
   if (axios.isAxiosError(error)) {
