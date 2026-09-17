@@ -25,7 +25,7 @@ export default function HomePage() {
       setError("");
 
       
-      window.location.href = `/analyze?repo=${encodeURIComponent(url)}`;
+      window.location.href = `/details?repo=${encodeURIComponent(url)}`;
     } catch (error) {
       console.error(error);
       setError("Unable to analyze the repository. Please try again.");
