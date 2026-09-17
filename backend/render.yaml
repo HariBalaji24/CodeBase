@@ -1,0 +1,52 @@
+services:
+  # HTTP API - handles /getrepository, /analyze, /analyze/:jobId, the
+  # search endpoint, and the /admin/queues Bull Board dashboard.
+  - type: web
+    name: codebase-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: Xenova/all-MiniLM-L6-v2
+      - key: BULLBOARD_USER
+        sync: false
+      - key: BULLBOARD_PASSWORD
+        sync: false
+
+  # Background worker - downloads repo zips, chunks, embeds and writes to Chroma.
+  # No public port; picks jobs off the same Redis queue as the API.
+  - type: worker
+    name: codebase-worker
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run worker
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: Xenova/all-MiniLM-L6-v2

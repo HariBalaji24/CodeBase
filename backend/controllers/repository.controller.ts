@@ -3,7 +3,7 @@ import axios from "axios";
 import dotenv from "dotenv";
 dotenv.config();
 
-const parseRepoUrl = (repourl: string) => {
+export const parseRepoUrl = (repourl: string) => {
   const { hostname, pathname } = new URL(repourl);
 
   if (!hostname.endsWith("github.com")) {
