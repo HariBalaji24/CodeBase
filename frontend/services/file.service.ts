@@ -22,7 +22,9 @@ async function getGithubRepository(url: string) {
   } catch (error) {
     if (axios.isAxiosError(error)) {
       const message =
-        error.response?.data?.message 
+        error.response?.data?.message ??
+        error.message ??
+        "Backend request failed. Make sure the API server is running.";
 
       throw new Error(message);
     }
