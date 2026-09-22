@@ -65,3 +65,30 @@ export async function getAnalysisStatus(jobId: string): Promise<AnalysisStatus> 
     throw toError(error);
   }
 }
+
+export type SearchHit = {
+  id: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  score: number;
+};
+
+// Semantic search over an already-indexed repo's chunks.
+export async function searchRepository(
+  owner: string,
+  repo: string,
+  query: string,
+  topK = 5,
+): Promise<SearchHit[]> {
+  try {
+    const response = await axios.post(
+      `${backendUrl()}/analyze/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/search`,
+      { query, topK },
+    );
+    return response.data.data;
+  } catch (error) {
+    throw toError(error);
+  }
+}
