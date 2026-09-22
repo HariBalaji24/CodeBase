@@ -10,9 +10,20 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://code-base-xi.vercel.app",
+];
+
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://code-base-xi.vercel.app/"],
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
+    },
     credentials: true,
   }),
 );
