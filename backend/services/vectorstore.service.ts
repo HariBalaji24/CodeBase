@@ -4,13 +4,10 @@ import type { Chunk } from "./chunk.service.ts";
 
 dotenv.config();
 
-// One Chroma collection per repo, e.g. "repo__facebook__react".
-// Keeps repos isolated and lets us drop/re-index one without touching others.
 const collectionNameFor = (owner: string, repo: string) =>
   `repo__${owner}__${repo}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
 
-// CHROMA_API_KEY present -> talk to Chroma Cloud (production).
-// Otherwise -> talk to a local/self-hosted Chroma server via CHROMA_URL (dev, docker compose).
+
 const client = process.env.CHROMA_API_KEY
   ? new CloudClient({
       apiKey: process.env.CHROMA_API_KEY,
@@ -35,10 +32,7 @@ const getCollection = (owner: string, repo: string): Promise<Collection> => {
     promise = client.getOrCreateCollection({
       name,
       metadata: { owner, repo },
-      // We bring our own embeddings (transformers.js) - never let Chroma embed for us.
       embeddingFunction: null,
-      // Our embeddings are normalised, so cosine distance is what "score" below assumes.
-      // Chroma's default space is l2, which would make scores meaningless otherwise.
       configuration: { hnsw: { space: "cosine" } },
     });
     collectionCache.set(name, promise);
