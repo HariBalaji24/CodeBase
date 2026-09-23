@@ -1,16 +1,15 @@
 import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 
-// Small, fast sentence-embedding model (384 dims). Downloaded once and cached
-// by transformers.js under node_modules/@huggingface/transformers/.cache.
+
 const MODEL_ID = process.env.EMBEDDING_MODEL ?? "Xenova/all-MiniLM-L6-v2";
-const BATCH_SIZE = 16;
+const BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE) || 8;
 
 let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
 
 const getExtractor = () => {
   if (!extractorPromise) {
     extractorPromise = pipeline("feature-extraction", MODEL_ID, {
-      dtype: "fp32",
+      dtype: "q8",
     }) as Promise<FeatureExtractionPipeline>;
   }
   return extractorPromise;
