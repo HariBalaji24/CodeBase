@@ -4,6 +4,7 @@ import analysis from "../controllers/analysis.controller.ts";
 
 const router = express.Router();
 
+router.route("/health").get(analysis.health);
 router.route("/getrepository").post(service.getrepository);
 router.route("/analyze").post(analysis.startAnalysis);
 router.route("/analyze/:jobId").get(analysis.getAnalysisStatus);

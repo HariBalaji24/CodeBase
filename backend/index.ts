@@ -4,6 +4,9 @@ import dotenv from "dotenv";
 import router from "./routes/routes.ts";
 import { createBullBoardRouter } from "./services/board.service.ts";
 import { requireBasicAuth } from "./services/auth.middleware.ts";
+import { ensureQueueReady, repoQueue } from "./services/queue.service.ts";
+import { ensureChromaReady, chromaTarget } from "./services/vectorstore.service.ts";
+import { redisTarget } from "./services/redis.service.ts";
 import { startRepoWorker } from "./workers/repo.worker.ts";
 
 dotenv.config();
@@ -40,17 +43,41 @@ app.use(
 
 app.use("/", router);
 
+// Prints once at startup whether the services analysis depends on are reachable.
+const reportDependencies = async () => {
+  const [redis, chroma] = await Promise.allSettled([ensureQueueReady(8000), ensureChromaReady(8000)]);
+  console.log(
+    redis.status === "fulfilled"
+      ? `[api] Redis: connected (${redisTarget})`
+      : `[api] Redis: NOT reachable - ${(redis.reason as Error).message}`,
+  );
+  console.log(
+    chroma.status === "fulfilled"
+      ? `[api] Chroma: connected (${chromaTarget})`
+      : `[api] Chroma: NOT reachable - ${(chroma.reason as Error).message}`,
+  );
+};
+
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`[api] Server is running on port ${PORT}`);
+  void reportDependencies();
 });
 
-// Free hosting tiers (e.g. Render's free plan) often don't offer a separate
-// "background worker" service type - only a web service, which needs a port.
-// RUN_WORKER_INLINE=true runs the queue worker in this same process instead
-// of a dedicated one, so no second (paid) service is required. Uses more
-// memory per instance (the embedding model + API together) - fine for a
-// single-user/demo deploy; split it back into workers/repo.worker.ts run via
-// `npm run worker` as its own service once you outgrow this.
-if (process.env.RUN_WORKER_INLINE === "true") {
-  startRepoWorker();
+// By default this process also runs the queue worker, so `npm run dev` / `npm start`
+// is all it takes for jobs to be processed - one service on free hosting tiers.
+// Set RUN_WORKER=false only if you run a separate `npm run worker` process instead.
+const worker = process.env.RUN_WORKER === "false" ? null : startRepoWorker();
+if (!worker) {
+  console.log("[api] RUN_WORKER=false - jobs are processed only by a separate `npm run worker` process.");
 }
+
+const shutdown = async () => {
+  // Don't wait for a running job: it is picked up again after restart.
+  await Promise.race([
+    Promise.all([worker?.stop(), repoQueue.close()]),
+    new Promise((resolve) => setTimeout(resolve, 5000)),
+  ]);
+  process.exit(0);
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
