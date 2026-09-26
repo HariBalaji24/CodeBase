@@ -11,6 +11,7 @@ export type AnalysisStage =
 export type AnalysisProgress = {
   stage: AnalysisStage;
   percent: number;
+  message?: string;
   files?: number;
   chunks?: number;
 };
@@ -21,10 +22,27 @@ export type AnalysisStatus = {
   progress?: AnalysisProgress | number | null;
   result?: { files: number; chunks: number } | null;
   error?: string | null;
+  attemptsMade?: number;
+  maxAttempts?: number;
+  queuedAt?: number | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
+  logs?: string[];
+  // false while a job is waiting but no worker process is running to pick it up
+  workerOnline?: boolean;
   cached?: boolean;
-  files?: number;
-  chunks?: number;
 };
+
+// Error carrying the backend's machine-readable code (e.g. REDIS_UNAVAILABLE).
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 
 const backendUrl = () => {
   const url = process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -42,15 +60,25 @@ const backendUrl = () => {
 
 const toError = (error: unknown) => {
   if (axios.isAxiosError(error)) {
-    return new Error(error.response?.data?.message ?? error.message);
+    if (!error.response) {
+      const reason = error.code === "ECONNABORTED" ? "did not respond in time" : "could not be reached";
+      return new ApiError(`The backend at ${backendUrl()} ${reason}. Is it running?`);
+    }
+    return new ApiError(
+      error.response.data?.message ?? error.message,
+      error.response.status,
+      error.response.data?.code,
+    );
   }
   return error instanceof Error ? error : new Error(String(error));
 };
 
-// Asks the backend to download the repo zip and queue it for parsing + embedding.
-export async function startAnalysis(repourl: string): Promise<AnalysisStatus> {
+// Asks the backend to download the repo and queue it for parsing + embedding.
+// Returns the existing job/index instead if the repo was already analysed,
+// unless force is set.
+export async function startAnalysis(repourl: string, force = false): Promise<AnalysisStatus> {
   try {
-    const response = await axios.post(`${backendUrl()}/analyze`, { repourl });
+    const response = await axios.post(`${backendUrl()}/analyze`, { repourl, force }, { timeout: 30_000 });
     return response.data.data;
   } catch (error) {
     throw toError(error);
@@ -59,7 +87,9 @@ export async function startAnalysis(repourl: string): Promise<AnalysisStatus> {
 
 export async function getAnalysisStatus(jobId: string): Promise<AnalysisStatus> {
   try {
-    const response = await axios.get(`${backendUrl()}/analyze/${encodeURIComponent(jobId)}`);
+    const response = await axios.get(`${backendUrl()}/analyze/${encodeURIComponent(jobId)}`, {
+      timeout: 15_000,
+    });
     return response.data.data;
   } catch (error) {
     throw toError(error);
@@ -86,6 +116,7 @@ export async function searchRepository(
     const response = await axios.post(
       `${backendUrl()}/analyze/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/search`,
       { query, topK },
+      { timeout: 60_000 }, // the first search may load the embedding model
     );
     return response.data.data;
   } catch (error) {

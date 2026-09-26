@@ -21,10 +21,12 @@ import {
   Loader2,
   Network,
   PanelLeft,
+  RotateCcw,
   Save,
   Scissors,
   ShieldCheck,
   Sparkles,
+  Terminal,
 } from "lucide-react";
 
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,6 +35,7 @@ import {
   startAnalysis,
   getAnalysisStatus,
   searchRepository,
+  ApiError,
   type AnalysisStatus as AnalysisJobStatus,
   type SearchHit,
 } from "../../services/analysis.service";
@@ -113,6 +116,18 @@ export function AnalysisContent() {
     chunks: number;
   } | null>(null);
 
+  // What the worker is doing right now, as reported by the backend.
+  const [jobState, setJobState] = useState("starting");
+  const [progressMessage, setProgressMessage] = useState("Contacting the backend…");
+  const [workerOnline, setWorkerOnline] = useState(true);
+  const [jobLogs, setJobLogs] = useState<string[]>([]);
+  const [queuedAt, setQueuedAt] = useState<number | null>(null);
+  // Set while status requests are failing; polling keeps retrying meanwhile.
+  const [connectionError, setConnectionError] = useState("");
+  // Incremented by "Try again" to restart the whole start + poll flow.
+  const [runId, setRunId] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+
   /* =======================================================
      REAL ANALYSIS PROGRESS
      POST /analyze queues a BullMQ job that downloads the
@@ -126,21 +141,33 @@ export function AnalysisContent() {
 
     if (!repo) return;
 
+    setAnalysisProgress(0);
+    setAnalysisComplete(false);
+    setAnalysisStage("queued");
+    setAnalysisError("");
+    setJobState("starting");
+    setProgressMessage("Contacting the backend…");
+    setConnectionError("");
+    setJobLogs([]);
+
     const applyStatus = (status: AnalysisJobStatus) => {
+      setJobState(status.state);
+      setWorkerOnline(status.workerOnline !== false);
+      setJobLogs(status.logs ?? []);
+      setQueuedAt(status.queuedAt ?? null);
+
       if (status.state === "completed") {
         setAnalysisProgress(100);
         setAnalysisStage("completed");
         setAnalysisComplete(true);
         if (status.result) setAnalysisResult(status.result);
-        else if (typeof status.files === "number" && typeof status.chunks === "number") {
-          setAnalysisResult({ files: status.files, chunks: status.chunks });
-        }
         return true;
       }
 
       if (status.state === "failed") {
         setAnalysisError(status.error || "Repository analysis failed.");
-        setAnalysisStage("failed");
+        // Keep the stage it failed in, so the timeline can point at that step.
+        if (status.progress && typeof status.progress === "object") setAnalysisStage(status.progress.stage);
         return true;
       }
 
@@ -148,26 +175,41 @@ export function AnalysisContent() {
       if (progress && typeof progress === "object") {
         setAnalysisProgress(progress.percent);
         setAnalysisStage(progress.stage);
-      } else if (typeof progress === "number") {
-        setAnalysisProgress(progress);
+        setProgressMessage(progress.message ?? STAGE_LABELS[progress.stage] ?? progress.stage);
+      } else if (status.state === "delayed") {
+        setProgressMessage(
+          `Retrying after an error (attempt ${(status.attemptsMade ?? 0) + 1} of ${status.maxAttempts ?? 2})`,
+        );
+      } else if (status.state === "waiting") {
+        setProgressMessage("Waiting for a worker to pick up the job");
       } else {
-        setAnalysisStage(status.state);
+        setProgressMessage("Starting analysis");
       }
 
       return false;
     };
 
-    const poll = async (jobId: string) => {
+    const poll = async (jobId: string, failures = 0) => {
       if (cancelled) return;
 
       try {
         const status = await getAnalysisStatus(jobId);
-        if (cancelled || applyStatus(status)) return;
+        if (cancelled) return;
+        setConnectionError("");
+        if (applyStatus(status)) return;
+        failures = 0;
       } catch (err) {
-        console.error(err);
+        if (cancelled) return;
+        if (err instanceof ApiError && err.code === "JOB_NOT_FOUND") {
+          setAnalysisError("The analysis job no longer exists (it may have been removed from the queue).");
+          return;
+        }
+        failures += 1;
+        setConnectionError(err instanceof Error ? err.message : "Could not reach the backend.");
       }
 
-      timer = setTimeout(() => poll(jobId), 1500);
+      // Back off while the backend is unreachable, up to one attempt every 10s.
+      timer = setTimeout(() => poll(jobId, failures), failures ? Math.min(1500 * 2 ** failures, 10_000) : 1500);
     };
 
     const start = async () => {
@@ -178,9 +220,8 @@ export function AnalysisContent() {
           poll(status.jobId);
         }
       } catch (err) {
-        console.error(err);
+        if (cancelled) return;
         setAnalysisError(err instanceof Error ? err.message : "Unable to start repository analysis.");
-        setAnalysisStage("failed");
       }
     };
 
@@ -190,7 +231,17 @@ export function AnalysisContent() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [repo]);
+  }, [repo, runId]);
+
+  // Ticks the elapsed-time display while a job is in progress.
+  useEffect(() => {
+    if (analysisComplete || analysisError) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [analysisComplete, analysisError]);
+
+  const elapsed = queuedAt ? formatDuration(now - queuedAt) : null;
+  const retry = () => setRunId((id) => id + 1);
 
   /* =======================================================
      ASK - real semantic search over the indexed repo
@@ -406,20 +457,27 @@ export function AnalysisContent() {
                 </div>
 
                 {analysisError ? (
-                  <div className="mt-8 flex items-start gap-3 rounded-xl border border-red-400/15 bg-red-400/[0.04] px-4 py-3">
+                  <div className="mt-8 flex max-w-2xl items-start gap-3 rounded-xl border border-red-400/15 bg-red-400/[0.04] px-4 py-3">
                     <AlertTriangle size={17} className="mt-0.5 shrink-0 text-red-400" />
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-red-300">Analysis failed</div>
-                      <div className="mt-0.5 text-xs text-white/40">{analysisError}</div>
+                      <div className="mt-0.5 break-words text-xs leading-5 text-white/50">{analysisError}</div>
                     </div>
+                    <button
+                      onClick={retry}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] px-3 py-1.5 text-xs text-white/60 transition hover:bg-white/[0.05] hover:text-white"
+                    >
+                      <RotateCcw size={13} />
+                      Try again
+                    </button>
                   </div>
                 ) : !analysisComplete ? (
                   <div className="mt-8 max-w-2xl">
-                    <div className="mb-2 flex justify-between text-xs">
-                      <span className="text-white/30">
-                        {STAGE_LABELS[analysisStage] ?? "Building repository index"}
+                    <div className="mb-2 flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 truncate text-white/40">{progressMessage}</span>
+                      <span className="shrink-0 font-mono text-blue-300/60">
+                        {analysisProgress}%{elapsed ? ` · ${elapsed}` : ""}
                       </span>
-                      <span className="font-mono text-blue-300/60">{analysisProgress}%</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-white/[0.05]">
                       <motion.div
@@ -427,6 +485,21 @@ export function AnalysisContent() {
                         className="h-full rounded-full bg-gradient-to-r from-blue-500 via-violet-500 to-cyan-400"
                       />
                     </div>
+
+                    {jobState === "waiting" && !workerOnline && (
+                      <Notice>
+                        No worker is running, so this job is waiting in the queue. Start the backend
+                        with <code className="text-amber-200/80">npm run dev</code> (it runs the
+                        worker too), or run <code className="text-amber-200/80">npm run worker</code>{" "}
+                        if the API was started with RUN_WORKER=false.
+                      </Notice>
+                    )}
+
+                    {connectionError && (
+                      <Notice>
+                        {connectionError} Retrying…
+                      </Notice>
+                    )}
                   </div>
                 ) : (
                   <motion.div
@@ -482,6 +555,18 @@ export function AnalysisContent() {
                 </div>
 
                 <PipelineTimeline stage={analysisStage} failed={Boolean(analysisError)} />
+
+                {jobLogs.length > 0 && (
+                  <div className="border-t border-white/[0.07] px-5 py-4 sm:px-6">
+                    <div className="mb-2 flex items-center gap-2 text-xs font-medium text-white/40">
+                      <Terminal size={13} />
+                      Worker log
+                    </div>
+                    <pre className="max-h-48 overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3 font-mono text-[11px] leading-5 text-white/50">
+                      {jobLogs.map((line) => line.replace(/^\S+T(\d\d:\d\d:\d\d)\.\d+Z\s+/, "$1  ")).join("\n")}
+                    </pre>
+                  </div>
+                )}
               </motion.section>
 
               {/* Ask CodeBase - real semantic search */}
@@ -641,7 +726,7 @@ function PipelineTimeline({ stage, failed }: { stage: string; failed: boolean })
 
   const steps: AnalysisStep[] = STAGE_ORDER.map((key, index) => {
     let status: StepStatus = "queued";
-    if (failed && (currentIndex === index || currentIndex === -1)) status = "failed";
+    if (failed && currentIndex === index) status = "failed";
     else if (isComplete || (currentIndex !== -1 && index < currentIndex)) status = "complete";
     else if (currentIndex === index) status = "running";
 
@@ -852,6 +937,20 @@ function Message({ message }: { message: ChatMessage }) {
 /* =========================================================
    HELPERS
 ========================================================= */
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-400/15 bg-amber-400/[0.04] px-3.5 py-3 text-xs leading-5 text-amber-100/70">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function formatDuration(ms: number) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 function parseOwnerRepo(url: string): { owner: string; name: string } {
   try {
