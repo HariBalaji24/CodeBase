@@ -1,6 +1,6 @@
 "use client";
 import axios from "axios";
-
+import { authHeaders } from "./auth.service";
 
 async function getGithubRepository(url: string) {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -10,9 +10,11 @@ async function getGithubRepository(url: string) {
     );
   }
   try {
-    const response = await axios.post(`${backendUrl}/getrepository`, {
-      repourl: url,
-    });
+    const response = await axios.post(
+      `${backendUrl}/getrepository`,
+      { repourl: url },
+      { headers: await authHeaders() },
+    );
 
     return response.data.data;
   } catch (error) {

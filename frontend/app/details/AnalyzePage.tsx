@@ -37,6 +37,15 @@ import {
 
 import { motion } from "framer-motion";
 
+import {
+  AnimatedNumber,
+  FloatingShapes,
+  IsometricStack,
+  RepoCube,
+  ScrollProgress,
+  TiltCard,
+} from "./Visuals3D";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -161,8 +170,14 @@ export const AnalyzePage = () => {
   ======================================================= */
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#050608] text-white">
+    <motion.main
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.6 }}
+      className="relative min-h-screen overflow-hidden bg-[#050608] text-white"
+    >
       <DashboardBackground />
+      <ScrollProgress />
 
       {/* =====================================================
           NAVBAR
@@ -366,12 +381,14 @@ export const AnalyzePage = () => {
                 </div>
               </div>
 
-              {/* Connection status */}
+              {/* 3D object + connection status */}
 
-              <motion.div
-                whileHover={{
-                  y: -3,
-                }}
+              <div className="flex shrink-0 flex-col items-center gap-6">
+
+              <RepoCube />
+
+              <TiltCard
+                intensity={6}
                 className="relative min-w-[280px] overflow-hidden rounded-2xl border border-emerald-400/15 bg-emerald-400/[0.035] px-5 py-5"
               >
                 <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-emerald-400/[0.08] blur-3xl" />
@@ -410,7 +427,8 @@ export const AnalyzePage = () => {
                     className="h-full rounded-full bg-gradient-to-r from-emerald-400/40 via-emerald-400 to-cyan-400"
                   />
                 </div>
-              </motion.div>
+              </TiltCard>
+              </div>
             </div>
           </div>
         </motion.section>
@@ -433,36 +451,28 @@ export const AnalyzePage = () => {
         >
           <StatCard
             label="Stars"
-            value={formatNumber(
-              response.stargazers_count
-            )}
+            value={response.stargazers_count ?? 0}
             icon={<Star />}
             color="yellow"
           />
 
           <StatCard
             label="Forks"
-            value={formatNumber(
-              response.forks_count
-            )}
+            value={response.forks_count ?? 0}
             icon={<GitBranch />}
             color="violet"
           />
 
           <StatCard
             label="Open Issues"
-            value={formatNumber(
-              response.open_issues_count
-            )}
+            value={response.open_issues_count ?? 0}
             icon={<CircleDot />}
             color="orange"
           />
 
           <StatCard
             label="Watchers"
-            value={formatNumber(
-              response.watchers_count
-            )}
+            value={response.watchers_count ?? 0}
             icon={<Users />}
             color="cyan"
           />
@@ -483,12 +493,16 @@ export const AnalyzePage = () => {
               opacity: 0,
               y: 25,
             }}
-            animate={{
+            whileInView={{
               opacity: 1,
               y: 0,
             }}
+            viewport={{
+              once: true,
+              margin: "-60px",
+            }}
             transition={{
-              delay: 0.25,
+              duration: 0.6,
             }}
             className="overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.025]"
           >
@@ -604,12 +618,17 @@ export const AnalyzePage = () => {
               opacity: 0,
               y: 25,
             }}
-            animate={{
+            whileInView={{
               opacity: 1,
               y: 0,
             }}
+            viewport={{
+              once: true,
+              margin: "-60px",
+            }}
             transition={{
-              delay: 0.35,
+              duration: 0.6,
+              delay: 0.12,
             }}
             className="overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.025]"
           >
@@ -838,6 +857,10 @@ export const AnalyzePage = () => {
                 </div>
               </div>
 
+              {/* 3D layers */}
+
+              <IsometricStack />
+
               {/* Button */}
 
               <div className="relative shrink-0">
@@ -918,7 +941,7 @@ export const AnalyzePage = () => {
           </div>
         </footer>
       </div>
-    </main>
+    </motion.main>
   );
 };
 
@@ -976,6 +999,10 @@ function DashboardBackground() {
       {/* Cyan */}
 
       <div className="absolute bottom-[-250px] left-[25%] h-[500px] w-[500px] rounded-full bg-cyan-500/[0.035] blur-[160px]" />
+
+      {/* 3D floating shapes */}
+
+      <FloatingShapes />
     </div>
   );
 }
@@ -1261,7 +1288,7 @@ function StatCard({
   color,
 }: {
   label: string;
-  value: string;
+  value: number;
   icon: ReactNode;
   color: string;
 }) {
@@ -1277,21 +1304,20 @@ function StatCard({
   };
 
   return (
-    <motion.div
+    <TiltCard
       variants={{
         hidden: {
           opacity: 0,
-          y: 15,
+          y: 24,
         },
         visible: {
           opacity: 1,
           y: 0,
+          transition: { duration: 0.6 },
         },
       }}
-      whileHover={{
-        y: -4,
-      }}
-      className="group rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5 transition hover:border-white/[0.14] sm:p-6"
+      intensity={9}
+      className="group rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5 transition-colors hover:border-white/[0.14] sm:p-6"
     >
       <div className="flex items-center justify-between">
 
@@ -1307,24 +1333,14 @@ function StatCard({
       </div>
 
       <div className="mt-5 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-        {value}
-      </div>
-
-      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.04]">
-        <motion.div
-          initial={{
-            width: 0,
-          }}
-          animate={{
-            width: "65%",
-          }}
-          transition={{
-            duration: 1,
-          }}
-          className="h-full rounded-full bg-gradient-to-r from-blue-500/40 to-violet-400/60"
+        <AnimatedNumber
+          value={value}
+          format={formatNumber}
         />
       </div>
-    </motion.div>
+
+      
+    </TiltCard>
   );
 }
 
@@ -1353,12 +1369,13 @@ function InfoCard({
   };
 
   return (
-    <motion.div
-      whileHover={{
-        scale: 1.015,
-        y: -2,
-      }}
-      className="rounded-2xl border border-white/[0.06] bg-black/20 p-5"
+    <TiltCard
+      intensity={7}
+      initial={{ opacity: 0, y: 16 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.5 }}
+      className="rounded-2xl border border-white/[0.06] bg-black/20 p-5 transition-colors hover:border-white/[0.14]"
     >
       <div className="flex items-center gap-3">
 
@@ -1376,7 +1393,7 @@ function InfoCard({
       <div className="mt-4 truncate text-base font-semibold text-white/75 sm:text-lg">
         {value}
       </div>
-    </motion.div>
+    </TiltCard>
   );
 }
 

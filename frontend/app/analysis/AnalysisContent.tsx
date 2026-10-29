@@ -38,6 +38,7 @@ import {
   ApiError,
   type AnalysisStatus as AnalysisJobStatus,
   type SearchHit,
+  type RetrievalMetrics,
 } from "../../services/analysis.service";
 
 /* =========================================================
@@ -58,6 +59,8 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   hits?: SearchHit[];
+  metrics?: RetrievalMetrics;
+  llmError?: string | null;
 }
 
 // Real pipeline order, matching workers/repo.worker.ts on the backend.
@@ -257,14 +260,18 @@ export function AnalysisContent() {
     setSearching(true);
 
     try {
-      const hits = await searchRepository(owner, name, value);
+      const result = await searchRepository(owner, name, value);
       const assistantMessage: ChatMessage = {
         id: Date.now() + 1,
         role: "assistant",
-        content: hits.length
-          ? `Found ${hits.length} relevant code chunk${hits.length === 1 ? "" : "s"}:`
-          : "No relevant code was found for that question.",
-        hits,
+        content:
+          result.answer ??
+          (result.hits.length
+            ? `Found ${result.hits.length} relevant code chunk${result.hits.length === 1 ? "" : "s"}:`
+            : "No relevant code was found for that question."),
+        hits: result.hits,
+        metrics: result.metrics,
+        llmError: result.llmError,
       };
       setMessages((previous) => [...previous, assistantMessage]);
     } catch (err) {
@@ -882,6 +889,66 @@ function SuggestedQuestion({
 }
 
 /* =========================================================
+   METRICS PANEL
+   Precision/Recall/F1/MRR are always computable from retrieval alone.
+   Context Precision/Recall, Answer Relevance, Faithfulness and Groundedness
+   need a generated answer to judge against, so they're null (and hidden)
+   when the backend has no GROQ_API_KEY configured.
+========================================================= */
+
+function MetricBadge({ label, value }: { label: string; value: number }) {
+  const color =
+    value >= 0.7 ? "text-emerald-300 bg-emerald-400/[0.08]" : value >= 0.4 ? "text-amber-300 bg-amber-400/[0.08]" : "text-red-300 bg-red-400/[0.08]";
+
+  return (
+    <div className={`rounded-lg px-2.5 py-1.5 ${color}`}>
+      <div className="text-[9px] uppercase tracking-wide opacity-70">{label}</div>
+      <div className="font-mono text-xs font-semibold">{Math.round(value * 100)}%</div>
+    </div>
+  );
+}
+
+function MetricsPanel({ metrics }: { metrics: RetrievalMetrics }) {
+  const ragMetrics: { label: string; value: number | null }[] = [
+    { label: "Context Precision", value: metrics.contextPrecision },
+    { label: "Context Recall", value: metrics.contextRecall },
+    { label: "Answer Relevance", value: metrics.answerRelevance },
+    { label: "Faithfulness", value: metrics.faithfulness },
+    { label: "Groundedness", value: metrics.groundedness },
+  ];
+  const hasRagMetrics = ragMetrics.some((m) => m.value !== null);
+
+  return (
+    <div className="mt-3 border-t border-white/[0.07] pt-3">
+      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-white/25">
+        Retrieval quality
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <MetricBadge label="Precision" value={metrics.precision} />
+        <MetricBadge label="Recall" value={metrics.recall} />
+        <MetricBadge label="F1" value={metrics.f1} />
+        <MetricBadge label="MRR" value={metrics.mrr} />
+      </div>
+
+      {hasRagMetrics && (
+        <>
+          <div className="mb-1.5 mt-3 text-[10px] font-medium uppercase tracking-wide text-white/25">
+            Answer quality (LLM-judged)
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {ragMetrics
+              .filter((m): m is { label: string; value: number } => m.value !== null)
+              .map((m) => (
+                <MetricBadge key={m.label} label={m.label} value={m.value} />
+              ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
    MESSAGE
 ========================================================= */
 
@@ -908,6 +975,14 @@ function Message({ message }: { message: ChatMessage }) {
         }`}
       >
         <div>{message.content}</div>
+
+        {message.llmError && (
+          <div className="mt-2 text-[11px] text-amber-300/60">
+            Generated-answer metrics unavailable: {message.llmError}
+          </div>
+        )}
+
+        {message.metrics && <MetricsPanel metrics={message.metrics} />}
 
         {message.hits && message.hits.length > 0 && (
           <div className="mt-3 space-y-2">

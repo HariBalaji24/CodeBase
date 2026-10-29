@@ -1,5 +1,6 @@
 "use client";
 import axios from "axios";
+import { authHeaders } from "./auth.service";
 
 export type AnalysisStage =
   | "downloading"
@@ -78,7 +79,11 @@ const toError = (error: unknown) => {
 // unless force is set.
 export async function startAnalysis(repourl: string, force = false): Promise<AnalysisStatus> {
   try {
-    const response = await axios.post(`${backendUrl()}/analyze`, { repourl, force }, { timeout: 30_000 });
+    const response = await axios.post(
+      `${backendUrl()}/analyze`,
+      { repourl, force },
+      { timeout: 30_000, headers: await authHeaders() },
+    );
     return response.data.data;
   } catch (error) {
     throw toError(error);
@@ -89,6 +94,7 @@ export async function getAnalysisStatus(jobId: string): Promise<AnalysisStatus> 
   try {
     const response = await axios.get(`${backendUrl()}/analyze/${encodeURIComponent(jobId)}`, {
       timeout: 15_000,
+      headers: await authHeaders(),
     });
     return response.data.data;
   } catch (error) {
@@ -105,18 +111,91 @@ export type SearchHit = {
   score: number;
 };
 
-// Semantic search over an already-indexed repo's chunks.
+export type RetrievalMetrics = {
+  // Computed from retrieval alone (similarity-score threshold), always present.
+  precision: number;
+  recall: number;
+  f1: number;
+  mrr: number;
+  // Require a generated answer to judge against; null when GROQ_API_KEY isn't
+  // configured on the backend (llmAvailable will be false in that case).
+  contextPrecision: number | null;
+  contextRecall: number | null;
+  answerRelevance: number | null;
+  faithfulness: number | null;
+  groundedness: number | null;
+  reasoning: string | null;
+};
+
+export type SearchResponse = {
+  hits: SearchHit[];
+  answer: string | null;
+  metrics: RetrievalMetrics;
+  llmAvailable: boolean;
+  llmError: string | null;
+};
+
+// Semantic search over an already-indexed repo's chunks, plus a generated
+// answer and evaluation metrics for that retrieval.
 export async function searchRepository(
   owner: string,
   repo: string,
   query: string,
   topK = 5,
-): Promise<SearchHit[]> {
+): Promise<SearchResponse> {
   try {
     const response = await axios.post(
       `${backendUrl()}/analyze/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/search`,
       { query, topK },
-      { timeout: 60_000 }, // the first search may load the embedding model
+      { timeout: 60_000, headers: await authHeaders() }, // the first search may load the embedding model
+    );
+    return response.data.data;
+  } catch (error) {
+    throw toError(error);
+  }
+}
+
+export type IndexedRepo = {
+  owner: string;
+  repo: string;
+  repourl: string;
+  model: string;
+  files: number;
+  chunks: number;
+  indexedAt: string | null;
+  // Not returned by the backend yet; the dashboard shows them only when present.
+  language?: string | null;
+  framework?: string | null;
+  lines?: number;
+};
+
+export type RepoStats = {
+  files: number;
+  chunks: number;
+  linesCovered: number;
+  languages: { name: string; files: number; chunks: number }[];
+  topFiles: { path: string; chunks: number }[];
+};
+
+// Every repo that has been fully analysed and stored, newest first.
+export async function listRepositories(): Promise<IndexedRepo[]> {
+  try {
+    const response = await axios.get(`${backendUrl()}/repositories`, {
+      timeout: 30_000,
+      headers: await authHeaders(),
+    });
+    return response.data.data;
+  } catch (error) {
+    throw toError(error);
+  }
+}
+
+// Metrics (languages, biggest files, ...) computed from one repo's stored chunks.
+export async function getRepositoryStats(owner: string, repo: string): Promise<RepoStats> {
+  try {
+    const response = await axios.get(
+      `${backendUrl()}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,
+      { timeout: 60_000, headers: await authHeaders() },
     );
     return response.data.data;
   } catch (error) {
