@@ -11,7 +11,7 @@ import {
 } from "../services/queue.service.ts";
 import { createWorkerConnection, throttledErrorLogger } from "../services/redis.service.ts";
 import { downloadRepoZip, extractTextFiles } from "../services/unzip.service.ts";
-import { chunkFiles } from "../services/chunk.service.ts";
+import { chunkFilesStructureAware, convertToLegacyChunks, type StructureChunk } from "../services/chunk.structure.ts";
 import { EMBEDDING_MODEL, embedTexts, warmUpEmbeddings } from "../services/embedding.service.ts";
 import { saveIndex } from "../services/vectorstore.service.ts";
 
@@ -56,14 +56,15 @@ const processRepo = async (job: Job<RepoJobData, RepoJobResult>): Promise<RepoJo
     throw new Error("No source files found in this repository (only binaries, dependencies or files over 200 KB).");
   }
 
-  await report({ stage: "chunking", percent: STAGE_START.chunking, message: "Splitting files into chunks", files: files.length });
-  const chunks = chunkFiles(files);
-  await log(`Split into ${chunks.length} chunks`);
+  await report({ stage: "chunking", percent: STAGE_START.chunking, message: "Parsing AST and extracting semantic chunks", files: files.length });
+  const structureChunks = await chunkFilesStructureAware(files);
+  const chunks = convertToLegacyChunks(structureChunks);
+  await log(`Split into ${chunks.length} structure-aware chunks (${structureChunks.filter(c => c.metadata.type !== 'other').length} semantic units)`);
 
   await report({
     stage: "embedding",
     percent: STAGE_START.embedding,
-    message: "Loading embedding model (the first run downloads ~25 MB)",
+    message: "Loading embedding model (the first run downloads ~137 MB)",
     files: files.length,
     chunks: chunks.length,
   });
@@ -88,7 +89,7 @@ const processRepo = async (job: Job<RepoJobData, RepoJobResult>): Promise<RepoJo
     percent: STAGE_START.saving,
     message: "Saving embeddings to Chroma",
     files: files.length,
-    chunks: chunks.length,
+    chunks: structureChunks.length,
   });
   const collection = await saveIndex({
     owner,
@@ -96,18 +97,18 @@ const processRepo = async (job: Job<RepoJobData, RepoJobResult>): Promise<RepoJo
     repourl,
     model: EMBEDDING_MODEL,
     files: files.length,
-    chunks: chunks.map((chunk, i) => ({ ...chunk, embedding: embeddings[i] ?? [] })),
+    chunks: structureChunks.map((chunk, i) => ({ ...chunk, embedding: embeddings[i] ?? [] })),
   });
-  await log(`Saved ${chunks.length} chunks to Chroma collection "${collection}"`);
+  await log(`Saved ${structureChunks.length} chunks to Chroma collection "${collection}"`);
   await report({
     stage: "saving",
     percent: 100,
-    message: `Indexed ${chunks.length} chunks from ${files.length} files`,
+    message: `Indexed ${structureChunks.length} chunks from ${files.length} files`,
     files: files.length,
-    chunks: chunks.length,
+    chunks: structureChunks.length,
   });
 
-  return { files: files.length, chunks: chunks.length, collection };
+  return { files: files.length, chunks: structureChunks.length, collection };
 };
 
 let inProcessWorker: Worker<RepoJobData, RepoJobResult> | null = null;

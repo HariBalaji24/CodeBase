@@ -15,10 +15,19 @@ import {
   collectionNameFor,
   ensureChromaReady,
   getIndexInfo,
+  getRepoStats,
+  listIndexedRepos,
   searchIndex,
   type IndexInfo,
 } from "../services/vectorstore.service.ts";
 import { embedQuery } from "../services/embedding.service.ts";
+import {
+  computeLiveRetrievalMetrics,
+  evaluateRetrieval,
+  printMetrics,
+  type GroundTruthItem,
+} from "../services/evaluation.service.ts";
+import { generateAnswer, isLLMAvailable, judgeRagMetrics } from "../services/llm.service.ts";
 import { isInProcessWorkerRunning } from "../workers/repo.worker.ts";
 import { parseRepoUrl } from "./repository.controller.ts";
 
@@ -176,11 +185,126 @@ const searchRepository = async (req: Request, res: Response) => {
       return res.status(404).json({ message: `"${owner}/${repo}" has not been indexed yet. Run analysis first.` });
     }
 
-    const queryEmbedding = await embedQuery(query.trim());
+    const trimmedQuery = query.trim();
+    const queryEmbedding = await embedQuery(trimmedQuery);
     const hits = await searchIndex(owner, repo, queryEmbedding, Number(topK) || 8);
-    return res.status(200).json({ message: "Search results", data: hits });
+
+    
+    const retrieval = await computeLiveRetrievalMetrics(owner, repo, queryEmbedding, hits);
+    let answer: string | null = null;
+    let judged: Awaited<ReturnType<typeof judgeRagMetrics>> | null = null;
+    let llmError: string | null = null;
+    if (isLLMAvailable()) {
+      try {
+        answer = await generateAnswer(trimmedQuery, hits);
+        judged = await judgeRagMetrics(trimmedQuery, hits, answer);
+      } catch (error) {
+        llmError = error instanceof Error ? error.message : "The LLM request failed.";
+      }
+    }
+
+    return res.status(200).json({
+      message: "Search results",
+      data: {
+        hits,
+        answer,
+        metrics: {
+          precision: retrieval.precision,
+          recall: retrieval.recall,
+          f1: retrieval.f1,
+          mrr: retrieval.mrr,
+          contextPrecision: judged?.contextPrecision ?? null,
+          contextRecall: judged?.contextRecall ?? null,
+          answerRelevance: judged?.answerRelevance ?? null,
+          faithfulness: judged?.faithfulness ?? null,
+          groundedness: judged?.groundedness ?? null,
+          reasoning: judged?.reasoning ?? null,
+        },
+        llmAvailable: isLLMAvailable(),
+        llmError,
+      },
+    });
   } catch (error) {
     return sendError(res, error, "Could not search the repository index.");
+  }
+};
+
+// GET /repositories -> every repo that has been fully indexed
+const listRepositories = async (_req: Request, res: Response) => {
+  try {
+    await ensureChromaReady();
+    return res.status(200).json({ message: "Indexed repositories", data: await listIndexedRepos() });
+  } catch (error) {
+    return sendError(res, error, "Could not list the indexed repositories.");
+  }
+};
+
+// GET /repositories/:owner/:repo/stats -> metrics computed from the repo's stored chunks
+const getRepositoryStats = async (req: Request, res: Response) => {
+  const { owner, repo } = req.params;
+  if (typeof owner !== "string" || typeof repo !== "string") {
+    return res.status(400).json({ message: "Missing owner/repo." });
+  }
+
+  try {
+    await ensureChromaReady();
+    const stats = await getRepoStats(owner, repo);
+    if (!stats) {
+      return res.status(404).json({ message: `"${owner}/${repo}" has not been indexed yet.` });
+    }
+    return res.status(200).json({ message: "Repository stats", data: stats });
+  } catch (error) {
+    return sendError(res, error, "Could not compute the repository stats.");
+  }
+};
+
+// POST /evaluate/:owner/:repo/retrieval  { groundTruth: [{ query, relevantPaths }], kValues? } -> retrieval metrics
+//
+// BUG FIXED: this handler used to be declared as `const evaluateRetrieval`,
+// the same name as the imported service function above. That shadowed the
+// import for the entire module, so the call below resolved to itself instead
+// of the real evaluateRetrieval() - infinite recursion on every request,
+// which would have stack-overflowed the process the first time this endpoint
+// was hit. Renamed the handler; the imported service function is now reachable.
+const evaluateRetrievalHandler = async (req: Request, res: Response) => {
+  const { owner, repo } = req.params;
+  const { groundTruth, kValues } = req.body ?? {};
+
+  if (typeof owner !== "string" || typeof repo !== "string") {
+    return res.status(400).json({ message: "Missing owner/repo." });
+  }
+  if (!Array.isArray(groundTruth) || groundTruth.length === 0) {
+    return res.status(400).json({ message: "groundTruth array is required with at least one query." });
+  }
+
+  for (const item of groundTruth) {
+    if (typeof item.query !== "string" || !item.query.trim()) {
+      return res.status(400).json({ message: "Each groundTruth item must have a non-empty query string." });
+    }
+    if (!Array.isArray(item.relevantPaths) || item.relevantPaths.length === 0) {
+      return res.status(400).json({ message: "Each groundTruth item must have relevantPaths array." });
+    }
+  }
+
+  try {
+    await ensureChromaReady();
+    if (!(await getIndexInfo(owner, repo))) {
+      return res.status(404).json({ message: `"${owner}/${repo}" has not been indexed yet.` });
+    }
+
+    const metrics = await evaluateRetrieval(
+      owner,
+      repo,
+      groundTruth as GroundTruthItem[],
+      Array.isArray(kValues) ? kValues : undefined,
+    );
+    return res.status(200).json({
+      message: "Evaluation complete",
+      data: metrics,
+      summary: printMetrics(metrics),
+    });
+  } catch (error) {
+    return sendError(res, error, "Could not run retrieval evaluation.");
   }
 };
 
@@ -215,4 +339,4 @@ const health = async (_req: Request, res: Response) => {
   });
 };
 
-export default { startAnalysis, getAnalysisStatus, searchRepository, health };
+export default { startAnalysis, getAnalysisStatus, searchRepository, listRepositories, getRepositoryStats, health, evaluateRetrieval: evaluateRetrievalHandler };

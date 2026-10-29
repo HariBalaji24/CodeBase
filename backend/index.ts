@@ -1,7 +1,11 @@
+// Must be first: ES imports are hoisted, so loading .env later would leave modules
+// like auth.controller (AUTH_SECRET) and the Redis/Chroma services without their config.
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import router from "./routes/routes.ts";
+import { isAllowedOrigin } from "./config/origins.ts";
+import { ensureAuthSchema } from "./services/db.service.ts";
 import { createBullBoardRouter } from "./services/board.service.ts";
 import { requireBasicAuth } from "./services/auth.middleware.ts";
 import { ensureQueueReady, repoQueue } from "./services/queue.service.ts";
@@ -9,26 +13,20 @@ import { ensureChromaReady, chromaTarget } from "./services/vectorstore.service.
 import { redisTarget } from "./services/redis.service.ts";
 import { startRepoWorker } from "./workers/repo.worker.ts";
 
-dotenv.config();
-
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://code-base-xi.vercel.app",
-];
+// Needed behind Render's proxy so req.ip (rate limiting) and secure cookies work.
+app.set("trust proxy", 1);
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
-        callback(null, true);
-      } else {
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
-      }
+      // Disallowed origins simply get no CORS headers (browser blocks them) rather than a 500.
+      callback(null, !origin || isAllowedOrigin(origin));
     },
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 app.use(express.json());
@@ -61,6 +59,10 @@ const reportDependencies = async () => {
 app.listen(PORT, () => {
   console.log(`[api] Server is running on port ${PORT}`);
   void reportDependencies();
+  ensureAuthSchema().then(
+    () => console.log("[api] Database: auth tables ready"),
+    (error: Error) => console.log(`[api] Database: NOT reachable - ${error.message}`),
+  );
 });
 
 // By default this process also runs the queue worker, so `npm run dev` / `npm start`

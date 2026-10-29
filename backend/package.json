@@ -20,19 +20,25 @@
     "@bull-board/express": "^9.10.1",
     "@huggingface/transformers": "^4.2.0",
     "axios": "^1.20.0",
+    "bcryptjs": "^3.0.3",
     "bullmq": "^6.3.4",
     "chromadb": "^3.5.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ioredis": "^6.0.0",
+    "jose": "^5.2.0",
+    "pg": "^8.23.1",
     "tsx": "^4.23.12",
-    "unzipper": "^0.12.5"
+    "unzipper": "^0.12.5",
+    "web-tree-sitter": "^0.27.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
     "@types/unzipper": "^0.10.11",
     "nodemon": "^3.1.14",
     "typescript": "^7.0.2"

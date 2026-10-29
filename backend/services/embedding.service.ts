@@ -6,20 +6,17 @@ import {
   type PreTrainedTokenizer,
 } from "@huggingface/transformers";
 
-// Small sentence-embedding model (384 dims), downloaded from Hugging Face on
-// first use (~25 MB) and cached under node_modules/@huggingface/transformers/.cache.
-export const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "Xenova/all-MiniLM-L6-v2";
+// Nomic Embed Text v1.5 (768 dims), downloaded from Hugging Face on
+// first use (~137 MB) and cached under node_modules/@huggingface/transformers/.cache.
+export const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-ai/nomic-embed-text-v1.5";
 
-// This model was trained on inputs of at most 256 tokens; its tokenizer would
-// otherwise allow 512. Longer inputs add memory (attention grows with the
-// square of the length) without improving the embedding. Capping at 256 cut
-// peak memory on a 68-file repo from ~800 MB to ~340 MB, which is what keeps
-// indexing inside Render's 512 MB free tier.
-const MAX_TOKENS = 256;
+// Nomic Embed Text supports up to 8192 tokens. We cap at 2048 to balance
+// quality and memory usage. Longer context improves retrieval for large files.
+const MAX_TOKENS = 2048;
 
-// Texts embedded per model call. Bigger is faster but uses more memory
-// (~460 MB peak at 16 on the same repo). Raise it locally if you have RAM.
-const BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE) || 4;
+// Texts embedded per model call. Nomic is larger; keep batch small to fit
+// in memory (especially on free tiers). Adjust via EMBEDDING_BATCH_SIZE.
+const BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE) || 2;
 
 type Embedder = { tokenizer: PreTrainedTokenizer; model: PreTrainedModel };
 

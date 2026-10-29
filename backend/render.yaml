@@ -27,6 +27,12 @@ services:
         sync: false
       - key: BULLBOARD_PASSWORD
         sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
 
   # Background worker - downloads repo zips, chunks, embeds and writes to Chroma.
   # No public port; picks jobs off the same Redis queue as the API.

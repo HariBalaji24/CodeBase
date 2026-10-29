@@ -8,15 +8,10 @@ export type Chunk = {
   content: string;
 };
 
-// Sized so a chunk fits the embedding model's 256-token window (roughly
-// 800-1000 characters of code). Anything past the window is cut off before
-// embedding, which would make the rest of an oversized chunk unsearchable.
 const CHUNK_LINES = 30;
 const OVERLAP_LINES = 5;
 const MAX_CHUNK_CHARS = 1000;
 
-// Splits each file into overlapping line-based windows. Line-based keeps
-// chunks aligned with code structure better than raw character slicing.
 export const chunkFile = (file: RepoFile): Chunk[] => {
   const lines = file.content.split("\n");
   const chunks: Chunk[] = [];

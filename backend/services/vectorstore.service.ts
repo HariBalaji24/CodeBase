@@ -1,6 +1,7 @@
 import { ChromaClient, CloudClient, type Collection } from "chromadb";
 import dotenv from "dotenv";
 import type { Chunk } from "./chunk.service.ts";
+import type { StructureChunk } from "./chunk.structure.ts";
 import { ServiceUnavailableError } from "./redis.service.ts";
 
 dotenv.config();
@@ -82,13 +83,15 @@ const findCollection = async (owner: string, repo: string): Promise<Collection |
 
 export type EmbeddedChunk = Chunk & { embedding: number[] };
 
+export type EmbeddedStructureChunk = StructureChunk & { embedding: number[] };
+
 export type RepoIndex = {
   owner: string;
   repo: string;
   repourl: string;
   model: string;
   files: number;
-  chunks: EmbeddedChunk[];
+  chunks: (EmbeddedChunk | EmbeddedStructureChunk)[];
 };
 
 // Replaces the repo's collection with a fresh one. The collection is marked
@@ -120,11 +123,24 @@ export const saveIndex = async (index: RepoIndex): Promise<string> => {
         ids: batch.map((c) => c.id),
         embeddings: batch.map((c) => c.embedding),
         documents: batch.map((c) => c.content),
-        metadatas: batch.map((c) => ({
-          path: c.path,
-          startLine: c.startLine,
-          endLine: c.endLine,
-        })),
+        metadatas: batch.map((c) => {
+          const base = {
+            path: c.path,
+            startLine: c.startLine,
+            endLine: c.endLine,
+          };
+          if ("metadata" in c && c.metadata) {
+            return {
+              ...base,
+              scope: c.metadata.scope,
+              chunkType: c.metadata.type,
+              symbols: c.metadata.symbols.join(","),
+              parentSymbol: c.metadata.parentSymbol || "",
+              language: c.metadata.language,
+            };
+          }
+          return base;
+        }),
       }),
       60_000,
       "Chroma upsert",
@@ -163,6 +179,128 @@ export const getIndexInfo = async (owner: string, repo: string): Promise<IndexIn
     files: Number(metadata.files ?? 0),
     chunks: Number(metadata.chunks ?? 0),
     indexedAt: typeof metadata.indexedAt === "string" ? metadata.indexedAt : null,
+  };
+};
+
+export type IndexedRepo = {
+  owner: string;
+  repo: string;
+  repourl: string;
+  model: string;
+  files: number;
+  chunks: number;
+  indexedAt: string | null;
+};
+
+// Every fully indexed repo, newest first. Reads collection metadata only, so
+// it stays cheap no matter how many chunks each repo has.
+export const listIndexedRepos = async (): Promise<IndexedRepo[]> => {
+  const PAGE = 100;
+  const collections: Collection[] = [];
+
+  for (let offset = 0; ; offset += PAGE) {
+    const page = await withTimeout(
+      client.listCollections({ limit: PAGE, offset }),
+      15_000,
+      "Chroma listCollections",
+    );
+    collections.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  return collections
+    .flatMap((collection) => {
+      const m = collection.metadata;
+      if (!m || m.complete !== true || typeof m.owner !== "string" || typeof m.repo !== "string") return [];
+      return [
+        {
+          owner: m.owner,
+          repo: m.repo,
+          repourl: typeof m.repourl === "string" ? m.repourl : `https://github.com/${m.owner}/${m.repo}`,
+          model: typeof m.model === "string" ? m.model : "",
+          files: Number(m.files ?? 0),
+          chunks: Number(m.chunks ?? 0),
+          indexedAt: typeof m.indexedAt === "string" ? m.indexedAt : null,
+        },
+      ];
+    })
+    .sort((a, b) => Date.parse(b.indexedAt ?? "") - Date.parse(a.indexedAt ?? "") || 0);
+};
+
+const LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript", ".jsx": "JavaScript",
+  ".mjs": "JavaScript", ".cjs": "JavaScript", ".py": "Python", ".rb": "Ruby", ".go": "Go",
+  ".rs": "Rust", ".java": "Java", ".kt": "Kotlin", ".swift": "Swift", ".c": "C", ".h": "C",
+  ".cpp": "C++", ".hpp": "C++", ".cs": "C#", ".php": "PHP", ".scala": "Scala",
+  ".html": "HTML", ".css": "CSS", ".scss": "CSS", ".vue": "Vue", ".svelte": "Svelte",
+  ".json": "JSON", ".yml": "YAML", ".yaml": "YAML", ".toml": "TOML", ".xml": "XML",
+  ".md": "Markdown", ".mdx": "Markdown", ".txt": "Text", ".sql": "SQL", ".graphql": "GraphQL",
+  ".prisma": "Prisma", ".sh": "Shell",
+};
+
+const languageOf = (filePath: string) => {
+  const base = filePath.split("/").pop() ?? filePath;
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot).toLowerCase() : "";
+  return LANGUAGE_BY_EXTENSION[ext] ?? (ext ? ext.slice(1).toUpperCase() : "Other");
+};
+
+export type RepoStats = {
+  files: number;
+  chunks: number;
+  linesCovered: number; // sum of chunk line spans (overlapping lines count twice)
+  languages: { name: string; files: number; chunks: number }[];
+  topFiles: { path: string; chunks: number }[];
+};
+
+// Metrics computed from the stored chunks of one repo. Returns null if it isn't indexed.
+export const getRepoStats = async (owner: string, repo: string): Promise<RepoStats | null> => {
+  const collection = await findCollection(owner, repo);
+  if (!collection || collection.metadata?.complete !== true) return null;
+
+  const PAGE = 300;
+  const MAX_PAGES = 100; // 30k chunks is far beyond the 50 MB repo cap
+  const chunksByFile = new Map<string, number>();
+  let chunks = 0;
+  let linesCovered = 0;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await withTimeout(
+      collection.get({ limit: PAGE, offset: page * PAGE, include: ["metadatas"] }),
+      30_000,
+      "Chroma get",
+    );
+
+    for (const metadata of result.metadatas) {
+      const filePath = String(metadata?.path ?? "");
+      if (!filePath) continue;
+      chunks += 1;
+      linesCovered += Math.max(0, Number(metadata?.endLine ?? 0) - Number(metadata?.startLine ?? 0) + 1);
+      chunksByFile.set(filePath, (chunksByFile.get(filePath) ?? 0) + 1);
+    }
+
+    if (result.ids.length < PAGE) break;
+  }
+
+  const languages = new Map<string, { files: number; chunks: number }>();
+  for (const [filePath, count] of chunksByFile) {
+    const entry = languages.get(languageOf(filePath)) ?? { files: 0, chunks: 0 };
+    entry.files += 1;
+    entry.chunks += count;
+    languages.set(languageOf(filePath), entry);
+  }
+
+  return {
+    files: chunksByFile.size,
+    chunks,
+    linesCovered,
+    languages: [...languages]
+      .map(([name, value]) => ({ name, ...value }))
+      .sort((a, b) => b.chunks - a.chunks),
+    topFiles: [...chunksByFile]
+      .map(([path, count]) => ({ path, chunks: count }))
+      .sort((a, b) => b.chunks - a.chunks)
+      .slice(0, 5),
   };
 };
 
